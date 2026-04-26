@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ooruflow_db
+    restart: always
+    environment:
+      POSTGRES_DB: ooruflow
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - ooruflow-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ooruflow_redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - ooruflow-network
+
+  app:
+    build: .
+    container_name: ooruflow_api
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - db
+      - redis
+    networks:
+      - ooruflow-network
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: /api
+        API_PROXY_TARGET: http://app:8000
+    container_name: ooruflow_web
+    restart: always
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - API_PROXY_TARGET=http://app:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - ooruflow-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: ooruflow_nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+      - web
+    networks:
+      - ooruflow-network
+
+  celery-worker:
+    build: .
+    container_name: ooruflow_celery_worker
+    restart: always
+    command: celery -A app.tasks worker --loglevel=info
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - ooruflow-network
+
+  celery-beat:
+    build: .
+    container_name: ooruflow_celery_beat
+    restart: always
+    command: celery -A app.tasks beat --loglevel=info
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - ooruflow-network
+
+networks:
+  ooruflow-network:
+    driver: bridge
+
+volumes:
+  pg_data:
